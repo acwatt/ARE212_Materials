@@ -207,10 +207,6 @@ def plots(type_list, proportions_dict, D=1000, title_size = 20, fig_size=(8,5)):
     plt.show()
 
 
-    
-##############################################
-# Main: Monte Carlo simulations for 
-##############################################
 
 def run_moments(beta=(5,3), N=1000, D=100, k_max=20, alpha=0.05):
     """
@@ -292,10 +288,16 @@ def run_moments(beta=(5,3), N=1000, D=100, k_max=20, alpha=0.05):
 
     return reject_portions #dictionary of data
 
+
+##############################################
+# Main: Monte Carlo simulations for different number of moments
+##############################################
 if 1==1:
     # print table of proportions of MC draws that lead to a rejected null 
     # hypothesis (of normality)
     num_of_simulations = 10
+    # increasing the number of simulations makes a smoother graph, but takes
+    # much longer
     reject_portions = run_moments(D=num_of_simulations)
     print(pd.DataFrame(reject_portions, index=reject_portions['moments']))
             
