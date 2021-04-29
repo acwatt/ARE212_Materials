@@ -156,7 +156,7 @@ def J(b,K,W,data):
     return N*m.T@W@m # Scale by sample size
 
 
-def cu_gmm(data, K, Omega_inv_fun):
+def cu_gmm(data, beta, K, Omega_inv_fun):
     """Continuously-Updated GMM
     In each step of the minimization, the covariance matrix estimate is updated
     with the new parameter value
@@ -169,7 +169,7 @@ def cu_gmm(data, K, Omega_inv_fun):
     of just a single parameter.
     """
     J_b = lambda b: J(b, K, Omega_inv_fun(b[1]), data)
-    J_min = minimize(J_b, x0=(mu,sigma))
+    J_min = minimize(J_b, x0=beta)
     return J_min
 
 
@@ -211,100 +211,117 @@ def plots(type_list, proportions_dict, D=1000, title_size = 20, fig_size=(8,5)):
 ##############################################
 # Main: Monte Carlo simulations for 
 ##############################################
+
+def run_moments(beta=(5,3), N=1000, D=100, k_max=20, alpha=0.05):
+    """
+    Want to see how the average null hypothesis rejection rate changes when
+    including different numbers of moments. For each set of moments, run D
+    Monte Carlo simulations and calculate portion of simulations where the 
+    null hypothesis (that the data comes from a Normal dist) is rejected. Run
+    through 2 to k_max moments.
+
+    Parameters
+    ----------
+    beta : 2-tuple, true parameters (mean, sd)
+    N : int, number of obs to use in each simulation
+    D : int, number of simulations to use for each moment
+    k_max : int, max number of moments to include
+    alpha : float, significance level of hypothesis test
+
+    Returns
+    -------
+    dictionary of rejection data
+
+    """
+    # True parameters
+    mu, sigma = beta
     
-# True parameters
-mu = 5
-sigma = 3
+    # Run some Monte Carlo!
+    # Try pulling data from different distributions in type_list
+    # For each distribution type, try many different #s of moment conditions
+    # For each # of moment conditions, run a Monte Carlo set of simulations to
+    #     calculate the portion of the MC simulations that lead to a rejected 
+    #     null hypothesis that the data came from a Normal distribution
+    
+    type_list = ['normal', 'cauchy', 'poisson']
+    reject_portions = {} 
+    for dist in type_list:
+        print(f'Working on {dist} distribution')
+        rejections = []
+        # Try different numbers of moment conditions (2 - k_max)
+        for K in progressbar.progressbar(range(2, k_max+1)):
+            print()
+            P_values = []
+            # Find Asymptotic Covariance matrix under null
+            Omega_inv_fun = OmegaInv(K) 
+            # Omega_inv_fun is a function of the paramters
+            # Monte Carlo: simulate data D times
+            for d in range(1,D+1):
+                print(f'\rMoments = {K}/{k_max}, MC draw = {d}/{D}', end='')
+                # added a try-except loop because sometimes
+                # the data leads to a singular covariance matrix
+                soltn = None
+                n=0
+                while soltn is None:
+                    n+=1
+                    try: 
+                        # for each MC draw of data, get the GMM Solution
+                        # passing the Omega Inverse function for this set of K moments
+                        soltn = cu_gmm(dgp(N, mu, sigma, dist = dist), 
+                                       (mu, sigma), K, Omega_inv_fun)
+                        # Minimized criterion function value
+                        J_min = soltn.fun
+                        # Calculate the prob. of observing this J value or greater if
+                        # the true distribution is normal (assym. J = 0)
+                        # p-value = 1 - CDF(J-value)
+                        P_values.append(1 - iid.chi2.cdf(J_min, K-2, loc=0, scale=1))
+                    except TypeError:
+                        print(f'\rTypeError {n}', end='')                    
+                        
+                    except:
+                        pass
+    
+            # Calculate the portion of MC draws where we would reject the null
+            reject_portion = sum(1 for i in P_values if i < alpha) / D
+            rejections.append(reject_portion)
+        # Add proportions of rejections to dictionary for this sampling distribution
+        reject_portions[dist] = rejections
+    
+    
+    reject_portions['moments'] = [k for k in range(2, k_max+1)]
 
-# number of observations to pull
-N = 1000
-# Monte Carlo draws
-D = 100
-# Max. number of moment conditions to test
-k_max = 20
-# Significance level
-alpha = 0.05
+    return reject_portions #dictionary of data
 
-# Omega_inv_fun = OmegaInv(5)
-# b(mu,sigma)
-# Omega_inv_fun(b)
-
-# Run some Monte Carlo!
-# Try pulling data from different distributions in type_list
-# For each distribution type, try many different #s of moment conditions
-# For each # of moment conditions, run a Monte Carlo set of simulations to
-#     calculate the portion of the MC simulations that lead to a rejected 
-#     null hypothesis that the data came from a Normal distribution
-
-type_list = ['normal', 'cauchy', 'poisson']
-reject_portions = {} 
-for dist in type_list:
-    print(f'Working on {dist} distribution')
-    rejections = []
-    # Try different numbers of moment conditions (2 - k_max)
-    for K in progressbar.progressbar(range(2, k_max+1)):
-        print()
-        P_values = []
-        # Find Asymptotic Covariance matrix under null
-        Omega_inv_fun = OmegaInv(K) 
-        # Omega_inv_fun is a function of the paramters
-        # Monte Carlo: simulate data D times
-        for d in range(D):
-            if d%10==0: print(f'\rMoments = {K}/{k_max}, MC draw = {d}/{D}', end='')
-            # added a try-except loop because sometimes
-            # the data leads to a singular covariance matrix
-            soltn = None
-            n=0
-            while soltn is None:
-                n+=1
-                try: 
-                    # for each MC draw of data, get the GMM Solution
-                    # passing the Omega Inverse function for this set of K moments
-                    soltn = cu_gmm(dgp(N, mu, sigma, dist = dist), K, Omega_inv_fun)
-                    # Minimized criterion function value
-                    J_min = soltn.fun
-                    # Calculate the prob. of observing this J value or greater if
-                    # the true distribution is normal (assym. J = 0)
-                    # p-value = 1 - CDF(J-value)
-                    P_values.append(1 - iid.chi2.cdf(J_min, K-2, loc=0, scale=1))
-                except TypeError:
-                    print(f'\rTypeError {n}', end='')                    
-                    
-                except:
-                    pass
-
-        # Calculate the portion of MC draws where we would reject the null
-        reject_portion = sum(1 for i in P_values if i < alpha) / D
-        rejections.append(reject_portion)
-    # Add proportions of rejections to dictionary for this sampling distribution
-    reject_portions[dist] = rejections
-
-
-reject_portions['moments'] = [k for k in range(2, k_max+1)]
-
-# print table of proportions of MC draws that lead to a rejected null hypothesis (of normality)
-print(pd.DataFrame(reject_portions, index=reject_portions['moments']))
-        
-        
-# How does the proportion of rejected MC draws change with the number of moment conditions?
-# For each of the distributions tested, we can see how the number of moment conditions used
-#    changes how often we reject the null hypothesis. Ideally, we reject the null very
-#    little if we are pulling from a normal distribution, and we reject the null very
-#    often if we are pulling from a non-normal distribution. 
-# For a given # of moments used, we have calculated the portion of the MC simulations that 
-#    led to a rejected hypotheis. So let's plot (% MC simulations rejected) vs (# of moments used).
-plots(type_list, reject_portions, D=D)
-
-
-# In loop, just save max. output (J, mu, sigma) for plotting later
-# can plot distribution of J or p-values at each moment for any 
-# level of significance
-
-# optimal # of moments ==> what's the optimal subset of moments of that size?
-# +/- 1 moment (if optimal is 4, look at all combinations of 3, 4, and 5 moments
-# for all moments less than 30)
-
-# Can I use conda to install an env in my home directory where I can install other packages and upload the wolfram kernal?
+if 1==1:
+    # print table of proportions of MC draws that lead to a rejected null 
+    # hypothesis (of normality)
+    num_of_simulations = 10
+    reject_portions = run_moments(D=num_of_simulations)
+    print(pd.DataFrame(reject_portions, index=reject_portions['moments']))
+            
+            
+    # How does the proportion of rejected MC draws change with the number of 
+    # moment conditions?
+    # For each of the distributions tested, we can see how the number of 
+    #    moment conditions used changes how often we reject the null hypothesis. 
+    #    Ideally, we reject the null very little if we are pulling from a normal 
+    #    distribution, and we reject the null very often if we are pulling from 
+    #    a non-normal distribution. 
+    # For a given # of moments used, we have calculated the portion of the MC 
+    #    simulations that led to a rejected hypotheis. So let's plot 
+    #    (% MC simulations rejected) vs (# of moments used).
+    plots(['normal', 'cauchy', 'poisson'], reject_portions, D=100)
+    
+    
+    # In loop, just save max. output (J, mu, sigma) for plotting later
+    # can plot distribution of J or p-values at each moment for any 
+    # level of significance
+    
+    # optimal # of moments ==> what's the optimal subset of moments of that size?
+    # +/- 1 moment (if optimal is 4, look at all combinations of 3, 4, and 5 moments
+    # for all moments less than 30)
+    
+    # Can I use conda to install an env in my home directory where I can install other packages and upload the wolfram kernal?
 
 
 bhats = []
@@ -318,14 +335,14 @@ if 1==0:
     cols = ['N','b','s','J']
     data = pd.DataFrame(columns=['N','b','s','J'],dtype=float)
     Ns=[round(10**(k/2)) for k in range(2,12)]
-    D=100
+    D=10
     K=4
     Omega_inv_fun = OmegaInv(K)
     for N in Ns:
         try:
             for d in range(D):
                 print(f'\rRunning {N} observations', end='')
-                soltn = cu_gmm(dgp(N, mu=5, sigma=3, dist = 'normal'), K, Omega_inv_fun)
+                soltn = cu_gmm(dgp(N, mu=5, sigma=3, dist = 'normal'), (mu,sigma), K, Omega_inv_fun)
                 data1 = pd.DataFrame([[N, soltn.x[0], soltn.x[1], soltn.fun]], columns=cols)
                 data = data.append(data1)
         except:
